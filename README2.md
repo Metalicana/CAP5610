@@ -13,7 +13,7 @@ python build_and_push_edu_instruct.py --username viennh2012
   - source .venv2/bin/activate
   - pip install llama-models
   - hf auth login
-    - Token: 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 
+    - Token: ###
     - Select "n" for adding to git credential
   - Make sure you have python3.10 or higher
   - Wandb API key:
