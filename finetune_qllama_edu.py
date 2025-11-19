@@ -12,9 +12,9 @@ import torch
 import bitsandbytes as bnb
 
 # ---- CONFIG ----
-MODEL_NAME = "meta-llama/Llama-3.1-8B"       # or your local base model
+#MODEL_NAME = "meta-llama/Meta-Llama-3-8B"       # or your local base model
 #MODEL_NAME = "meta-llama/Llama-2-7b-hf" #for local with no GPU
-#MODEL_NAME = "meta-llama/Llama-2-7b"
+MODEL_NAME = "meta-llama/Llama-2-7b"
 #MODEL_NAME = "meta-llama/Llama-2-7b-chat-hf"
 DATA_DIR = "./EduInstruct"
 OUTPUT_DIR = "./llama2-edu-qlora"
