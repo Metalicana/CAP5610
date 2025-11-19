@@ -17,7 +17,7 @@ import bitsandbytes as bnb
 #MODEL_NAME = "meta-llama/Llama-2-7b"
 MODEL_NAME = "meta-llama/Llama-2-7b-chat-hf"
 DATA_DIR = "./EduInstruct"
-OUTPUT_DIR = "./llama3-edu-qlora"
+OUTPUT_DIR = "./llama2-edu-qlora"
 LORA_R = 16
 LORA_ALPHA = 32
 LORA_TARGET_MODULES = ["q_proj","v_proj","k_proj","o_proj","w1","w2"]  # typical targets, adapt if mismatch
@@ -28,6 +28,9 @@ MAX_LENGTH = 512
 
 # ---- Load tokenizer & dataset ----
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, use_fast=False)
+# tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+tokenizer.pad_token = tokenizer.eos_token
+
 dataset = load_from_disk(DATA_DIR)
 
 def make_text(example):
@@ -81,7 +84,7 @@ training_args = TrainingArguments(
     learning_rate=LR,
     fp16=True,
     logging_steps=50,
-    evaluation_strategy="steps",
+    eval_strategy="steps",
     eval_steps=500,
     save_strategy="steps",
     save_steps=500,
