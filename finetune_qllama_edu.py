@@ -22,7 +22,7 @@ LORA_R = 16
 LORA_ALPHA = 32
 LORA_TARGET_MODULES = ["q_proj","v_proj","k_proj","o_proj","w1","w2"]  # typical targets, adapt if mismatch
 BATCH_SIZE = 2
-EPOCHS = 1
+EPOCHS = 3
 LR = 2e-4
 MAX_LENGTH = 256
 
