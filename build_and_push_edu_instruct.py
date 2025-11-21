@@ -62,7 +62,7 @@ def main(username: str):
     print("🔹 Loading datasets...")
     gsm8k = load_dataset("openai/gsm8k", "main", split="train").map(format_gsm8k)
     arc = load_dataset("allenai/ai2_arc", "ARC-Challenge", split="train").map(format_arc)
-    sciq = load_dataset("sciq", split="train").map(format_sciq)
+    sciq = load_dataset("allenai/sciq", split="train").map(format_sciq)
     race = load_dataset("ehovy/race", "all", split="train").map(format_race)
 
     print("🔹 Merging datasets...")
