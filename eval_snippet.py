@@ -12,7 +12,8 @@ import gc
 MODEL = "meta-llama/Llama-2-7b-hf"
 FT_MODEL = "./llama2-edu-qlora/lora_adapter"  # fine-tuned adapters
 DATA_DIR = "./EduInstruct"
-MAX_EVAL_SAMPLES = 50  # Set to None to evaluate all, or a number to limit
+MAX_EVAL_SAMPLES = None  # Set to None to evaluate all, or a number to limit
+FORCE_CPU = False  # Set to True to force CPU-only evaluation (slower but uses less GPU memory)
 
 # Set threading to avoid conflicts
 torch.set_num_threads(1)
@@ -223,13 +224,32 @@ def evaluate_single_model(dataset, model, model_name, max_samples=None):
         if correct:
             results['by_subject'][subject]['correct'] += 1
         
-        # Periodic memory cleanup
-        if (i + 1) % batch_size == 0:
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            gc.collect()
+        # Periodic memory cleanup after every sample
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
     
     return results
+
+def get_model_loading_config():
+    """Get configuration for model loading based on available resources."""
+    if FORCE_CPU or not torch.cuda.is_available():
+        return {
+            'max_memory': None,
+            'device_map': None,
+            'dtype': torch.float32,
+            'device': 'cpu'
+        }
+    else:
+        total_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3  # GB
+        max_memory_gb = max(2.0, total_memory * 0.80)  # Use 80% of GPU, minimum 2GB (more conservative)
+        max_memory = {0: f"{max_memory_gb:.1f}GiB", "cpu": "30GiB"}
+        return {
+            'max_memory': max_memory,
+            'device_map': "auto",
+            'dtype': torch.float16,
+            'device': 'cuda:0'
+        }
 
 def evaluate_models_separately(dataset, max_samples=None):
     """Evaluate base and fine-tuned models separately to avoid mutex conflicts."""
@@ -243,27 +263,55 @@ def evaluate_models_separately(dataset, max_samples=None):
     print("STEP 1: Evaluating Base Model")
     print("="*60)
     
-    print("Loading base model with 4-bit quantization...")
+    print("Loading base model with 4-bit quantization and CPU offloading...")
     # Clear memory before loading
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     gc.collect()
     
+    # Calculate max memory - use most of GPU but leave some buffer
+    if torch.cuda.is_available():
+        total_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3  # GB
+        max_memory_gb = max(2.0, total_memory * 0.85)  # Use 85% of GPU, minimum 2GB
+        max_memory = {0: f"{max_memory_gb:.1f}GiB", "cpu": "30GiB"}
+        print(f"GPU memory: {total_memory:.1f}GB, allocating {max_memory_gb:.1f}GB to model")
+    else:
+        max_memory = None
+    
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,  # bitsandbytes 4-bit quant
         bnb_4bit_quant_type="nf4",
-        bnb_4bit_use_double_quant=False,
-        bnb_4bit_compute_dtype=torch.float16
+        bnb_4bit_use_double_quant=True,  # Enable double quantization to save more memory
+        bnb_4bit_compute_dtype=torch.float16 if load_config['device'] != 'cpu' else torch.float32
     )
-    base_model = AutoModelForCausalLM.from_pretrained(
-        MODEL, 
-        quantization_config=bnb_config,
-        device_map="auto",
-        torch_dtype=torch.float16,
-        low_cpu_mem_usage=True,
-        use_cache=False
-    )
-    print("Base model loaded.")
+    
+    try:
+        base_model = AutoModelForCausalLM.from_pretrained(
+            MODEL, 
+            quantization_config=bnb_config,
+            device_map=load_config['device_map'],
+            max_memory=load_config['max_memory'],
+            dtype=load_config['dtype'],
+            low_cpu_mem_usage=True,
+            use_cache=False
+        )
+        if load_config['device'] == 'cpu':
+            base_model = base_model.to("cpu")
+        print("Base model loaded.")
+    except Exception as e:
+        print(f"Error loading model: {e}")
+        print("Trying with CPU-only fallback...")
+        # Fallback: load to CPU only
+        base_model = AutoModelForCausalLM.from_pretrained(
+            MODEL,
+            quantization_config=bnb_config,
+            device_map=None,
+            max_memory=None,
+            dtype=torch.float32,
+            low_cpu_mem_usage=True,
+            use_cache=False
+        ).to("cpu")
+        print("Base model loaded on CPU (fallback).")
     
     try:
         results['base'] = evaluate_single_model(dataset, base_model, "Base Model", max_samples)
@@ -280,26 +328,46 @@ def evaluate_models_separately(dataset, max_samples=None):
     print("STEP 2: Evaluating Fine-tuned Model")
     print("="*60)
     
-    print("Loading fine-tuned model with 4-bit quantization...")
+    print("Loading fine-tuned model with 4-bit quantization and CPU offloading...")
     # Clear memory before loading
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     gc.collect()
     
+    # Re-get config in case memory situation changed
+    load_config = get_model_loading_config()
+    
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,  # bitsandbytes 4-bit quant
         bnb_4bit_quant_type="nf4",
-        bnb_4bit_use_double_quant=False,
-        bnb_4bit_compute_dtype=torch.float16
+        bnb_4bit_use_double_quant=True,  # Enable double quantization to save more memory
+        bnb_4bit_compute_dtype=torch.float16 if load_config['device'] != 'cpu' else torch.float32
     )
-    base_for_ft = AutoModelForCausalLM.from_pretrained(
-        MODEL,
-        quantization_config=bnb_config,
-        device_map="auto",
-        torch_dtype=torch.float16,
-        low_cpu_mem_usage=True,
-        use_cache=False
-    )
+    
+    try:
+        base_for_ft = AutoModelForCausalLM.from_pretrained(
+            MODEL,
+            quantization_config=bnb_config,
+            device_map=load_config['device_map'],
+            max_memory=load_config['max_memory'],
+            dtype=load_config['dtype'],
+            low_cpu_mem_usage=True,
+            use_cache=False
+        )
+        if load_config['device'] == 'cpu':
+            base_for_ft = base_for_ft.to("cpu")
+    except Exception as e:
+        print(f"Error loading model: {e}")
+        print("Trying with CPU-only fallback...")
+        base_for_ft = AutoModelForCausalLM.from_pretrained(
+            MODEL,
+            quantization_config=bnb_config,
+            device_map=None,
+            max_memory=None,
+            dtype=torch.float32,
+            low_cpu_mem_usage=True,
+            use_cache=False
+        ).to("cpu")
     
     ft_model = PeftModel.from_pretrained(base_for_ft, FT_MODEL)
     print("Fine-tuned model loaded.")
@@ -363,13 +431,13 @@ if __name__ == "__main__":
     print(f"Dataset loaded: {len(dataset)} samples")
     
     # Safety check: limit evaluation if MAX_EVAL_SAMPLES is too high
-    if MAX_EVAL_SAMPLES is None:
-        print("WARNING: MAX_EVAL_SAMPLES is None. This will evaluate all samples and may cause OOM.")
-        print("Consider setting MAX_EVAL_SAMPLES to a smaller number (e.g., 100-1000) for testing.")
-        response = input("Continue with full evaluation? (y/n): ")
-        if response.lower() != 'y':
-            MAX_EVAL_SAMPLES = 100
-            print(f"Limiting to {MAX_EVAL_SAMPLES} samples.")
+    # if MAX_EVAL_SAMPLES is None:
+    #     print("WARNING: MAX_EVAL_SAMPLES is None. This will evaluate all samples and may cause OOM.")
+    #     print("Consider setting MAX_EVAL_SAMPLES to a smaller number (e.g., 100-1000) for testing.")
+    #     response = input("Continue with full evaluation? (y/n): ")
+    #     if response.lower() != 'y':
+    #         MAX_EVAL_SAMPLES = 100
+    #         print(f"Limiting to {MAX_EVAL_SAMPLES} samples.")
     
     # Clear any CUDA cache before starting
     if torch.cuda.is_available():
