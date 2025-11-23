@@ -15,7 +15,7 @@ FT_MODEL = "./llama2-edu-qlora/lora_adapter"
 DATA_DIR = "./EduInstruct"
 BATCH_SIZE = 8
 MAX_NEW_TOKENS = 256
-MAX_EVAL_SAMPLES = 100  # or None for full eval
+MAX_EVAL_SAMPLES = None  # or None for full eval
 
 # --------- UTILS ---------
 def extract_numeric_answer(text):
