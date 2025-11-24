@@ -104,6 +104,7 @@ results = {'correct': 0, 'total': 0, 'by_subject': {}}
 
 batched = dataset.to_dict()
 total = len(dataset)
+batch_idx = 0
 
 for start in tqdm(range(0, total, BATCH_SIZE)):
     end = min(start + BATCH_SIZE, total)
@@ -125,18 +126,31 @@ for start in tqdm(range(0, total, BATCH_SIZE)):
         raw = tokenizer.decode(outputs[i][inputs['input_ids'].shape[1]:], skip_special_tokens=True)
         typ, gold = gt_list[i]
         pred = parse_model_answer(raw, typ)
+
         if compare(pred, gold, typ):
             results['correct'] += 1
+
         subject = batch[i].get('subject', 'unknown')
         if subject not in results['by_subject']:
             results['by_subject'][subject] = {'correct': 0, 'total': 0}
+
         results['by_subject'][subject]['total'] += 1
         if compare(pred, gold, typ):
             results['by_subject'][subject]['correct'] += 1
 
-    results['total'] += len(batch)
+        results['total'] += 1
+        batch_idx += 1
 
-# --------- REPORT ---------
+        # --------- PRINT SUMMARY EVERY 100 SAMPLES ---------
+        if results['total'] % 100 == 0:
+            print(f"\n--- Progress @ sample {results['total']} ---")
+            acc = results['correct'] / results['total'] * 100
+            print(f"Current Overall Accuracy: {results['correct']}/{results['total']} = {acc:.2f}%")
+            for subj, res in results['by_subject'].items():
+                subj_acc = res['correct'] / res['total'] * 100
+                print(f"  {subj.capitalize():12s} {res['correct']:4d}/{res['total']:4d} = {subj_acc:5.2f}%")
+
+# --------- FINAL REPORT ---------
 print("\n=== FINAL RESULTS ===")
 overall = results['correct'] / results['total'] * 100
 print(f"Overall: {results['correct']}/{results['total']} = {overall:.2f}%")
