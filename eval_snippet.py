@@ -96,7 +96,7 @@ base_model = AutoModelForCausalLM.from_pretrained(
     use_cache=False
 )
 base_model.eval()
-base_model = PeftModel.from_pretrained(base_model, FT_MODEL)
+# base_model = PeftModel.from_pretrained(base_model, FT_MODEL)
 base_model = torch.compile(base_model)
 
 print("Model ready.")
