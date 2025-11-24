@@ -2,6 +2,7 @@
 import os
 import gc
 import re
+import sys
 import torch
 import numpy as np
 from tqdm import tqdm
@@ -10,12 +11,12 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from peft import PeftModel
 
 # --------- CONFIG ---------
-MODEL = "meta-llama/Llama-2-7b-hf"  # or your local llama model
+MODEL = "meta-llama/Llama-2-7b-hf"
 FT_MODEL = "./llama2-edu-qlora/lora_adapter"
 DATA_DIR = "./EduInstruct"
 BATCH_SIZE = 8
 MAX_NEW_TOKENS = 256
-MAX_EVAL_SAMPLES = None  # or None for full eval
+MAX_EVAL_SAMPLES = None  # Use None to evaluate full dataset
 
 # --------- UTILS ---------
 def extract_numeric_answer(text):
@@ -68,16 +69,18 @@ def compare(pred, gold, typ):
 def build_prompt(ex):
     return f"### Instruction:\n{ex['instruction']}\n\n### Input:\n{ex['input']}\n\n### Response:\n"
 
-# --------- LOAD ---------
+# --------- LOAD DATASET ---------
 print("Loading dataset...")
 dataset = load_from_disk(DATA_DIR)
 if MAX_EVAL_SAMPLES:
     dataset = dataset.select(range(min(MAX_EVAL_SAMPLES, len(dataset))))
 print(f"Loaded {len(dataset)} samples")
 
+# --------- LOAD MODEL ---------
 print("Loading tokenizer and model...")
 tokenizer = AutoTokenizer.from_pretrained(MODEL, use_fast=False)
 tokenizer.pad_token = tokenizer.eos_token
+tokenizer.padding_side = "left"  # Fix for decoder-only models
 
 bnb_config = BitsAndBytesConfig(
     load_in_4bit=True,
@@ -98,13 +101,11 @@ base_model = torch.compile(base_model)
 
 print("Model ready.")
 
-# --------- EVAL ---------
+# --------- EVALUATION ---------
 print("Beginning batched evaluation...")
 results = {'correct': 0, 'total': 0, 'by_subject': {}}
-
 batched = dataset.to_dict()
 total = len(dataset)
-batch_idx = 0
 
 for start in tqdm(range(0, total, BATCH_SIZE)):
     end = min(start + BATCH_SIZE, total)
@@ -126,22 +127,19 @@ for start in tqdm(range(0, total, BATCH_SIZE)):
         raw = tokenizer.decode(outputs[i][inputs['input_ids'].shape[1]:], skip_special_tokens=True)
         typ, gold = gt_list[i]
         pred = parse_model_answer(raw, typ)
-
         if compare(pred, gold, typ):
             results['correct'] += 1
 
         subject = batch[i].get('subject', 'unknown')
         if subject not in results['by_subject']:
             results['by_subject'][subject] = {'correct': 0, 'total': 0}
-
         results['by_subject'][subject]['total'] += 1
         if compare(pred, gold, typ):
             results['by_subject'][subject]['correct'] += 1
 
         results['total'] += 1
-        batch_idx += 1
 
-        # --------- PRINT SUMMARY EVERY 100 SAMPLES ---------
+        # --------- PRINT INTERMEDIATE STATS EVERY 100 ---------
         if results['total'] % 100 == 0:
             print(f"\n--- Progress @ sample {results['total']} ---")
             acc = results['correct'] / results['total'] * 100
@@ -149,6 +147,7 @@ for start in tqdm(range(0, total, BATCH_SIZE)):
             for subj, res in results['by_subject'].items():
                 subj_acc = res['correct'] / res['total'] * 100
                 print(f"  {subj.capitalize():12s} {res['correct']:4d}/{res['total']:4d} = {subj_acc:5.2f}%")
+            sys.stdout.flush()
 
 # --------- FINAL REPORT ---------
 print("\n=== FINAL RESULTS ===")
